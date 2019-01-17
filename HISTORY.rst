@@ -3,6 +3,8 @@ History
 
 Next Release
 ------------
+* Extend the description of each test by a description of how it is
+  implemented.
 
 0.8.11 (2019-01-07)
 -------------------
