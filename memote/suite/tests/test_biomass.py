@@ -36,11 +36,10 @@ from memote.utils import annotate, truncate, get_ids, wrapper
 
 
 LOGGER = logging.getLogger(__name__)
-BIOMASS_IDS = pytest.memote.biomass_ids
 
 
 @annotate(title="Biomass Reactions Identified", format_type="count")
-def test_biomass_presence():
+def test_biomass_presence(model):
     """
     Expect the model to contain at least one biomass reaction.
 
@@ -67,7 +66,8 @@ def test_biomass_presence():
 
     """
     ann = test_biomass_presence.annotation
-    ann["data"] = BIOMASS_IDS
+    ann["data"] = [
+        rxn.id for rxn in helpers.find_biomass_reaction(model)]
     ann["message"] = wrapper.fill(
         """In this model {} the following biomass reactions were
         identified: {}""".format(
@@ -75,11 +75,10 @@ def test_biomass_presence():
     assert len(ann["data"]) > 0, ann["message"]
 
 
-# TODO: Mark this test as skipped if the biomass components lack formulas!
-@pytest.mark.parametrize("reaction_id", BIOMASS_IDS)
+@pytest.mark.biomass
 @annotate(title="Biomass Consistency", format_type="number", data=dict(),
           message=dict(), metric=dict())
-def test_biomass_consistency(read_only_model, reaction_id):
+def test_biomass_consistency(model, reaction_id):
     """
     Expect biomass components to sum up to 1 g[CDW].
 
@@ -89,7 +88,7 @@ def test_biomass_consistency(read_only_model, reaction_id):
     defined to be equal to 1 g/mmol. Conforming to this is essential in order
     to be able to reliably calculate growth yields, to cross-compare models,
     and to obtain valid predictions when simulating microbial consortia. A
-    deviation by 1e-03 is accepted.
+    deviation from 1 - 1E-03 to 1 + 1E-06 is accepted.
 
     Implementation:
     Multiplies the coefficient of each metabolite of the biomass reaction with
@@ -98,20 +97,29 @@ def test_biomass_consistency(read_only_model, reaction_id):
 
     """
     ann = test_biomass_consistency.annotation
-    reaction = read_only_model.reactions.get_by_id(reaction_id)
-    ann["data"][reaction_id] = biomass.sum_biomass_weight(reaction)
+    reaction = model.reactions.get_by_id(reaction_id)
+    try:
+        ann["data"][reaction_id] = biomass.sum_biomass_weight(reaction)
+    except TypeError:
+        ann["data"][reaction_id] = None
+        ann["message"][reaction_id] = wrapper.fill(
+            """One or more of the biomass components do not have a defined
+            formula or contain unspecified chemical groups."""
+        )
+    else:
+        ann["message"][reaction_id] = wrapper.fill(
+            """The component molar mass of the biomass reaction {} sums up to {}
+            which is outside of the 1e-03 margin from 1 mmol / g[CDW] / h.
+            """.format(reaction_id, ann["data"][reaction_id])
+        )
     ann["metric"][reaction_id] = 1.0  # Placeholder value.
-    ann["message"][reaction_id] = wrapper.fill(
-        """The component molar mass of the biomass reaction {} sums up to {}
-        which is outside of the 1e-03 margin from 1 mmol / g[CDW] / h.
-        """.format(reaction_id, ann["data"][reaction_id]))
-    # To account for numerical inaccuracies, a range from 1-1e0-3 to 1+1e-06
-    # is implemented in the assertion check
+    # To account for numerical inaccuracies, a range from 1 - 1e0-3 to 1 + 1e-06
+    # is implemented in the assertion check.
     assert (1 - 1e-03) < ann["data"][reaction_id] < (1 + 1e-06), \
         ann["message"][reaction_id]
 
 
-@pytest.mark.parametrize("reaction_id", BIOMASS_IDS)
+@pytest.mark.biomass
 @annotate(title="Biomass Production In Default Medium", format_type="number",
           data=dict(), message=dict(), metric=dict())
 def test_biomass_default_production(model, reaction_id):
@@ -138,7 +146,7 @@ def test_biomass_default_production(model, reaction_id):
     assert ann["data"][reaction_id] > 0.0, ann["message"][reaction_id]
 
 
-@pytest.mark.parametrize("reaction_id", BIOMASS_IDS)
+@pytest.mark.biomass
 @annotate(title="Biomass Production In Complete Medium", format_type="number",
           data=dict(), message=dict(), metric=dict())
 def test_biomass_open_production(model, reaction_id):
@@ -166,10 +174,10 @@ def test_biomass_open_production(model, reaction_id):
     assert ann["data"][reaction_id] > 0.0, ann["message"][reaction_id]
 
 
-@pytest.mark.parametrize("reaction_id", BIOMASS_IDS)
+@pytest.mark.biomass
 @annotate(title="Blocked Biomass Precursors In Default Medium",
           format_type="count", data=dict(), metric=dict(), message=dict())
-def test_biomass_precursors_default_production(read_only_model, reaction_id):
+def test_biomass_precursors_default_production(model, reaction_id):
     """
     Expect production of all biomass precursors in default medium.
 
@@ -188,12 +196,12 @@ def test_biomass_precursors_default_production(read_only_model, reaction_id):
 
     """
     ann = test_biomass_precursors_default_production.annotation
-    reaction = read_only_model.reactions.get_by_id(reaction_id)
+    reaction = model.reactions.get_by_id(reaction_id)
     ann["data"][reaction_id] = get_ids(
-        biomass.find_blocked_biomass_precursors(reaction, read_only_model)
+        biomass.find_blocked_biomass_precursors(reaction, model)
     )
     ann["metric"][reaction_id] = len(ann["data"][reaction_id]) / \
-        len(biomass.find_biomass_precursors(read_only_model, reaction))
+        len(biomass.find_biomass_precursors(model, reaction))
     ann["message"][reaction_id] = wrapper.fill(
         """Using the biomass reaction {} and when the model is simulated on the
         provided default medium a total of {} precursors
@@ -206,7 +214,7 @@ def test_biomass_precursors_default_production(read_only_model, reaction_id):
     assert len(ann["data"][reaction_id]) == 0, ann["message"][reaction_id]
 
 
-@pytest.mark.parametrize("reaction_id", BIOMASS_IDS)
+@pytest.mark.biomass
 @annotate(title="Blocked Biomass Precursors In Complete Medium",
           format_type="count", data=dict(), metric=dict(), message=dict())
 def test_biomass_precursors_open_production(model, reaction_id):
@@ -248,7 +256,7 @@ def test_biomass_precursors_open_production(model, reaction_id):
     assert len(ann["data"][reaction_id]) == 0, ann["message"][reaction_id]
 
 
-@pytest.mark.parametrize("reaction_id", BIOMASS_IDS)
+@pytest.mark.biomass
 @annotate(title="Growth-associated Maintenance in Biomass Reaction",
           format_type="raw", data=dict(), message=dict(), metric=dict())
 def test_gam_in_biomass(model, reaction_id):
@@ -276,7 +284,7 @@ def test_gam_in_biomass(model, reaction_id):
     assert ann["data"][reaction_id], ann["message"][reaction_id]
 
 
-@pytest.mark.parametrize("reaction_id", BIOMASS_IDS)
+@pytest.mark.biomass
 @annotate(title="Unrealistic Growth Rate In Default Medium",
           format_type="raw", data=dict(), message=dict(), metric=dict())
 def test_fast_growth_default(model, reaction_id):
@@ -304,7 +312,7 @@ def test_fast_growth_default(model, reaction_id):
     assert ann["data"][reaction_id] <= 10.3972, ann["message"][reaction_id]
 
 
-@pytest.mark.parametrize("reaction_id", BIOMASS_IDS)
+@pytest.mark.biomass
 @annotate(title="Ratio of Direct Metabolites in Biomass Reaction",
           format_type="percent", data=dict(), message=dict(), metric=dict())
 def test_direct_metabolites_in_biomass(model, reaction_id):
@@ -365,7 +373,7 @@ def test_direct_metabolites_in_biomass(model, reaction_id):
     assert ann["metric"][reaction_id] < 0.5, ann["message"][reaction_id]
 
 
-@pytest.mark.parametrize("reaction_id", BIOMASS_IDS)
+@pytest.mark.biomass
 @annotate(title="Number of Missing Essential Biomass Precursors",
           format_type="count", data=dict(), message=dict(), metric=dict())
 def test_essential_precursors_not_in_biomass(model, reaction_id):
